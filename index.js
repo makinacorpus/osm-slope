@@ -15,68 +15,80 @@ var fs = require('fs'),
 
 handler.on('way', function(way) {
     if (way.tags('highway')) {
-        var wayId = way.id,
-            coords = way.node_coordinates()
-                    .map(function(c) { return { lat: c.lat, lng: c.lon }; });
-        tasks.push(function(cb) {
-            var wait,
-                createWayInfo = function() {
-                    var wayInfo = coords.reduce(function(a, c) {
-                        var data = a.data,
-                            d;
+        var wayId = way.id;
+        // A way should have at least 2 nodes
+        // The first and second nodes of a way shouldn't be the same
+        if (way.nodes_count >= 2 && way.node_refs(0) !== way.node_refs(1)) {
 
-                        if (a.lastCoord) {
-                            d = haversine(a.lastCoord, c);
-                            if (c.elevation > a.lastElevation) {
-                                data.climb += c.elevation - a.lastElevation;
-                                data.climbDistance += d;
+            try {
+                var node_coordinates = way.node_coordinates();
+
+                var coords = node_coordinates
+                            .map(function(c) { return { lat: c.lat, lng: c.lon }; });
+
+                tasks.push(function(cb) {
+                    var wait,
+                        createWayInfo = function() {
+                            var wayInfo = coords.reduce(function(a, c) {
+                                var data = a.data,
+                                    d;
+
+                                if (a.lastCoord) {
+                                    d = haversine(a.lastCoord, c);
+                                    if (c.elevation > a.lastElevation) {
+                                        data.climb += c.elevation - a.lastElevation;
+                                        data.climbDistance += d;
+                                    } else {
+                                        data.descent += a.lastElevation - c.elevation;
+                                        data.descentDistance += d;
+                                    }
+
+                                    data.distance += d;
+                                }
+
+                                a.lastElevation = c.elevation;
+                                a.lastCoord = c;
+
+                                return a;
+                            }, {
+                                data: {
+                                    distance: 0,
+                                    climbDistance: 0,
+                                    descentDistance: 0,
+                                    climb: 0,
+                                    descent: 0
+                                }
+                            }).data;
+
+                            wayinfoMap[wayId] = wayInfo;
+                            setImmediate(function() {
+                                cb(undefined, wayInfo);
+                            });
+                        };
+
+                    wait = coords.length;
+
+                    coords.forEach(function(c) {
+                        tileSet.getElevation(c, function(err, elevation) {
+                            if (!err) {
+                                c.elevation = elevation;
+                                wait--;
                             } else {
-                                data.descent += a.lastElevation - c.elevation;
-                                data.descentDistance += d;
+                                console.log(err);
+                                cb(err);
+                                return;
                             }
 
-                            data.distance += d;
-                        }
-
-                        a.lastElevation = c.elevation;
-                        a.lastCoord = c;
-
-                        return a;
-                    }, {
-                        data: {
-                            distance: 0,
-                            climbDistance: 0,
-                            descentDistance: 0,
-                            climb: 0,
-                            descent: 0
-                        }
-                    }).data;
-
-                    wayinfoMap[wayId] = wayInfo;
-                    setImmediate(function() {
-                        cb(undefined, wayInfo);
+                            if (wait === 0) {
+                                createWayInfo();
+                            }
+                        });
                     });
-                };
-
-            wait = coords.length;
-
-            coords.forEach(function(c) {
-                tileSet.getElevation(c, function(err, elevation) {
-                    if (!err) {
-                        c.elevation = elevation;
-                        wait--;
-                    } else {
-                        console.log(err);
-                        cb(err);
-                        return;
-                    }
-
-                    if (wait === 0) {
-                        createWayInfo();
-                    }
                 });
-            });
-        });
+            } catch (ex) {
+                console.log('exception with way id: ',wayId, ' : ', ex);
+            }
+        }
     }
 });
 
